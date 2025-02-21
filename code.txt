@@ -1,0 +1,364 @@
+Option Explicit
+
+Public projectType As String
+Public projectNumber As String
+Public projectName As String
+Public projectAddress As String
+
+Sub FilterProjectTypeWithTotalAndExportPDF()
+    Dim wsSource As Worksheet
+    Dim wsNew As Worksheet
+    Dim wsSummary As Worksheet
+    Dim lastRow As Long
+    Dim rngSource As Range
+    Dim rngDestination As Range
+    Dim pdfPath As String
+    
+    ' Prompt user for project type, number, name, and address
+    projectType = GetProjectType()
+    If projectType = "" Then Exit Sub
+    
+    projectNumber = InputBox("Enter the Project Number:", "Project Number Input")
+    If projectNumber = "" Then Exit Sub
+    
+    projectName = InputBox("Enter the Project Name:", "Project Name Input")
+    If projectName = "" Then Exit Sub
+    
+    projectAddress = InputBox("Enter the Project Address:", "Project Address Input")
+    If projectAddress = "" Then Exit Sub
+    
+    ' Set the source worksheet
+    Set wsSource = ThisWorkbook.Worksheets("Sheet1")
+    
+    ' Create a new worksheet
+    Set wsNew = ThisWorkbook.Worksheets.Add
+    wsNew.Name = projectNumber  ' Rename the tab to project number
+    
+    ' Add project details to header
+    AddProjectHeader wsNew
+    
+    ' Find the last row in source
+    lastRow = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).row
+    
+    ' Set source range
+    Set rngSource = wsSource.Range("A1:G" & lastRow)
+    
+    ' Create new headers
+    CreateHeaders wsNew
+    
+    Set rngDestination = wsNew.Range("A6")  ' Start data from row 6 to accommodate header
+    
+    ' Filter and format data
+    FilterAndFormatData wsSource, wsNew, rngSource, rngDestination, projectType
+    
+    ' Formatting
+    FormatWorksheet wsNew
+    
+    ' Create Cost Summary tab
+    CreateCostSummary wsNew
+    
+    ' Export to PDF
+    ExportToPDF wsNew
+End Sub
+
+Sub AddProjectHeader(ws As Worksheet)
+    With ws
+        .Cells(1, 1).Value = "Project Number:"
+        .Cells(1, 2).Value = projectNumber
+        .Cells(2, 1).Value = "Project Name:"
+        .Cells(2, 2).Value = projectName
+        .Cells(3, 1).Value = "Project Address:"
+        .Cells(3, 2).Value = projectAddress
+        
+        ' Format header
+        .Range("A1:B3").Font.Bold = True
+        .Range("A1:A3").HorizontalAlignment = xlRight
+        .Range("B1:B3").HorizontalAlignment = xlLeft
+        .Rows("1:3").RowHeight = 20
+    End With
+End Sub
+
+Function GetProjectType() As String
+    Dim projectTypePrompt As String
+    projectTypePrompt = "Enter the project type (A, B, C, or D):" & vbNewLine & vbNewLine & _
+                        "Type A: Greenland Site Plan" & vbNewLine & _
+                        "Type B: Greenland Subdivision" & vbNewLine & _
+                        "Type C: Retrofit Site Plan" & vbNewLine & _
+                        "Type D: Retrofit Subdivision" & vbNewLine & vbNewLine & _
+                        "Your selection:"
+
+    GetProjectType = InputBox(projectTypePrompt, "Project Type Input")
+
+    ' Check if user canceled the input
+    If GetProjectType = "" Then
+        MsgBox "Operation canceled.", vbInformation
+        Exit Function
+    End If
+
+    ' Validate input
+    If Not (GetProjectType = "A" Or GetProjectType = "B" Or GetProjectType = "C" Or GetProjectType = "D") Then
+        MsgBox "Invalid project type. Please enter A, B, C, or D.", vbExclamation
+        GetProjectType = ""
+    End If
+End Function
+
+Sub CreateHeaders(ws As Worksheet)
+    With ws
+        .Cells(5, 1).Value = "Item"
+        .Cells(5, 2).Value = "Item Description"
+        .Cells(5, 3).Value = "Unit Rate"
+        .Cells(5, 4).Value = "Unit"
+        .Cells(5, 5).Value = "Quantity"
+        .Cells(5, 6).Value = "Total"
+    End With
+End Sub
+
+Sub FilterAndFormatData(wsSource As Worksheet, wsNew As Worksheet, rngSource As Range, rngDestination As Range, projectType As String)
+    Dim i As Long
+    Dim rowsCopied As Long
+    Dim itemText As String
+    Dim sectionTitle As String
+    Dim currentSection As String
+    Dim prevSection As String
+    Dim sectionStartRow As Long
+    
+    rowsCopied = 0
+    prevSection = ""
+    sectionStartRow = rngDestination.row
+    
+    For i = 2 To rngSource.Rows.Count
+        If rngSource.Cells(i, 1).Value = projectType Then
+            currentSection = rngSource.Cells(i, 2).Value
+            sectionTitle = GetSectionTitle(currentSection)
+            
+            ' Add section total if it's a new section (except for the first section)
+            If currentSection <> prevSection And prevSection <> "" Then
+                AddSectionTotal wsNew, rngDestination, prevSection, sectionStartRow
+                sectionStartRow = rngDestination.row + 1
+            End If
+            
+            ' Add section title if it's a new section
+            If currentSection <> prevSection Then
+                ' Add a blank row before the section title (except for the first section)
+                If rowsCopied > 0 Then
+                    Set rngDestination = rngDestination.Offset(1)
+                End If
+                
+                ' Add section title with "Section #" prefix
+                With wsNew.Cells(rngDestination.row, 1)
+                    .Value = UCase("Section " & currentSection & ": " & sectionTitle)
+                    .Font.Bold = True
+                    .Font.Size = 14
+                    .HorizontalAlignment = xlCenter
+                    .VerticalAlignment = xlCenter
+                End With
+                wsNew.Range(wsNew.Cells(rngDestination.row, 1), wsNew.Cells(rngDestination.row, 6)).Merge
+                Set rngDestination = rngDestination.Offset(1)
+                rowsCopied = rowsCopied + 1
+                prevSection = currentSection
+            End If
+            
+            ' Create Item column (combination of Section.Item No.Sub-item No.)
+            itemText = rngSource.Cells(i, 2).Value & "." & _
+                       rngSource.Cells(i, 3).Value & "." & _
+                       rngSource.Cells(i, 4).Value
+            
+            ' Add indent (leading space) for items with sub-items
+            If rngSource.Cells(i, 4).Value <> "" Then
+                itemText = "  " & itemText
+                ' Add indent to Item Description for sub-items
+                wsNew.Cells(rngDestination.row, 2).IndentLevel = 1
+            Else
+                ' Reset indent for main items
+                wsNew.Cells(rngDestination.row, 2).IndentLevel = 0
+            End If
+            
+            wsNew.Cells(rngDestination.row, 1).Value = itemText
+            wsNew.Cells(rngDestination.row, 2).Value = rngSource.Cells(i, 7).Value
+            wsNew.Cells(rngDestination.row, 3).Value = rngSource.Cells(i, 6).Value
+            wsNew.Cells(rngDestination.row, 4).Value = rngSource.Cells(i, 5).Value
+            
+            ' Add Total formula (C*E) in column F only if there's a Unit Rate
+            If Not IsEmpty(rngSource.Cells(i, 6).Value) Then
+                wsNew.Cells(rngDestination.row, 6).Formula = "=IF(C" & rngDestination.row & "<>"""",C" & rngDestination.row & "*E" & rngDestination.row & ","""")"
+            End If
+            
+            ' Check if the item has no sub-item and bold the Item and Item Description columns if true
+            If rngSource.Cells(i, 4).Value = "" Then
+                wsNew.Cells(rngDestination.row, 1).Font.Bold = True
+                wsNew.Cells(rngDestination.row, 2).Font.Bold = True
+            End If
+            
+            Set rngDestination = rngDestination.Offset(1)
+            rowsCopied = rowsCopied + 1
+        End If
+    Next i
+    
+    ' Add final section total
+    If rowsCopied > 0 Then
+        AddSectionTotal wsNew, rngDestination, currentSection, sectionStartRow
+    End If
+End Sub
+
+Sub AddSectionTotal(ws As Worksheet, rngDest As Range, sectionNumber As String, startRow As Long)
+    With ws
+        .Cells(rngDest.row, 1).Value = "Total for Section " & sectionNumber
+        .Cells(rngDest.row, 1).Font.Bold = True
+        .Cells(rngDest.row, 6).Formula = "=SUM(F" & startRow & ":F" & rngDest.row - 1 & ")"
+        .Cells(rngDest.row, 6).Font.Bold = True
+        .Cells(rngDest.row, 6).NumberFormat = "$#,##0.00"
+    End With
+    Set rngDest = rngDest.Offset(2) ' Move down two rows for the next section
+End Sub
+
+Sub FormatWorksheet(ws As Worksheet)
+    With ws
+        .Columns("C").NumberFormat = "$#,##0.00"
+        .Columns("F").NumberFormat = "$#,##0.00"
+        .Columns.AutoFit
+        
+        ' Enable wrap text for Item Description column
+        .Columns(2).WrapText = True
+        
+        ' Auto-fit row height
+        .Rows.AutoFit
+        
+        ' Highlight Quantity column (E) in yellow
+        With .Range("E:E")
+            .Interior.Color = vbYellow
+            .Font.Bold = True
+        End With
+        
+        ' Make headers bold (now in row 5)
+        .Range("A5:F5").Font.Bold = True
+        
+        ' Adjust Unit Rate and Total columns to approximately 100 pixels
+        .Columns("C").ColumnWidth = 15 ' Unit Rate
+        .Columns("F").ColumnWidth = 15 ' Total
+        
+        ' Adjust column widths to fit in PDF
+        AdjustColumnWidthsForPDF ws
+        
+        ' Add borders to provide vertical separation
+        AddBordersToWorksheet ws
+    End With
+End Sub
+
+Sub ExportToPDF(ws As Worksheet)
+    Dim pdfPath As String
+    
+    ' Export to PDF
+    pdfPath = ThisWorkbook.Path & "\" & projectNumber & ".pdf"  ' Use project number for PDF filename
+    ws.ExportAsFixedFormat Type:=xlTypePDF, Filename:=pdfPath, Quality:=xlQualityStandard, _
+        IncludeDocProperties:=True, IgnorePrintAreas:=False, OpenAfterPublish:=False
+    
+    MsgBox "New worksheet created and exported to PDF:" & vbNewLine & _
+           "File: " & pdfPath, vbInformation
+End Sub
+
+Function GetSectionTitle(sectionNumber As String) As String
+    Select Case sectionNumber
+        Case "1": GetSectionTitle = "Erosion and Sediment Control"
+        Case "2": GetSectionTitle = "Earthworks"
+        Case "3": GetSectionTitle = "Sanitary Sewers & Appurtenances"
+        Case "4": GetSectionTitle = "Storm Sewers & Appurtenances"
+        Case "5": GetSectionTitle = "Watermain & Appurtenances"
+        Case "6": GetSectionTitle = "Stormwater Management"
+        Case "7": GetSectionTitle = "Roadwork to Base Course"
+        Case "8": GetSectionTitle = "Removals & Relocations"
+        Case "9": GetSectionTitle = "Roadworks to Top Course"
+        Case "a1": GetSectionTitle = "Existing Condition"
+        Case "b1": GetSectionTitle = "Landscaping"
+        Case "c1": GetSectionTitle = "Geotechnical Investigation"
+        Case Else: GetSectionTitle = "Unknown Section"
+    End Select
+End Function
+
+Sub AdjustColumnWidthsForPDF(ws As Worksheet)
+    Const MAX_WIDTH As Double = 50 ' Maximum column width in points
+    Dim col As Range
+    Dim totalWidth As Double
+    Dim scaleFactor As Double
+    
+    ' Calculate total width of all columns
+    totalWidth = 0
+    For Each col In ws.UsedRange.Columns
+        totalWidth = totalWidth + col.ColumnWidth
+    Next col
+    
+    ' If total width exceeds page width, scale down
+    If totalWidth > MAX_WIDTH * 6 Then ' 6 columns now
+        scaleFactor = (MAX_WIDTH * 6) / totalWidth
+        For Each col In ws.UsedRange.Columns
+            col.ColumnWidth = col.ColumnWidth * scaleFactor
+        Next col
+    End If
+    
+    ' Ensure no column exceeds MAX_WIDTH
+    For Each col In ws.UsedRange.Columns
+        If col.ColumnWidth > MAX_WIDTH Then
+            col.ColumnWidth = MAX_WIDTH
+        End If
+    Next col
+    
+    ' Set page setup to fit width on one page and repeat first row
+    With ws.PageSetup
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .PrintTitleRows = "$1:$5"  ' Set first 5 rows to repeat at top
+    End With
+End Sub
+
+Sub AddBordersToWorksheet(ws As Worksheet)
+    Dim rng As Range
+    Set rng = ws.UsedRange
+    
+    With rng.Borders
+        .LineStyle = xlContinuous
+        .Weight = xlThin
+        .ColorIndex = xlAutomatic
+    End With
+End Sub
+
+
+Sub CreateCostSummary(wsData As Worksheet)
+    Dim wsSummary As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim sectionTitle As String
+    Dim summaryRow As Long
+    
+    ' Create a new worksheet for the summary
+    Set wsSummary = ThisWorkbook.Worksheets.Add
+    wsSummary.Name = "Cost Summary"
+    
+    ' Add headers
+    wsSummary.Cells(1, 1).Value = "Section"
+    wsSummary.Cells(1, 2).Value = "Total Cost"
+    
+    ' Find the last row in the data sheet
+    lastRow = wsData.Cells(wsData.Rows.Count, "A").End(xlUp).row
+    
+    summaryRow = 2
+    For i = 6 To lastRow ' Start from row 6 to skip the header
+        If InStr(wsData.Cells(i, 1).Value, "Total for Section") > 0 Then
+            sectionTitle = Replace(wsData.Cells(i, 1).Value, "Total for Section ", "")
+            wsSummary.Cells(summaryRow, 1).Value = GetSectionTitle(sectionTitle)
+            wsSummary.Cells(summaryRow, 2).Formula = "='" & wsData.Name & "'!F" & i
+            summaryRow = summaryRow + 1
+        End If
+    Next i
+    
+    ' Add overall total
+    wsSummary.Cells(summaryRow + 1, 1).Value = "Overall Total"
+    wsSummary.Cells(summaryRow + 1, 2).Formula = "=SUM(B2:B" & summaryRow - 1 & ")"
+    
+    ' Format the summary table
+    With wsSummary
+        .Range("A1:B" & summaryRow + 1).Font.Bold = True
+        .Columns("B:B").NumberFormat = "$#,##0.00"
+        .Columns("A:B").AutoFit
+        .Range("A1:B" & summaryRow + 1).Borders.LineStyle = xlContinuous
+    End With
+End Sub
